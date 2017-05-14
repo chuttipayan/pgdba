@@ -1,0 +1,174 @@
+---
+title: "test"
+output:
+  html_document: default
+  pdf_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Frame 
+
+This report is for finding the state which holds the highest sale of onions 
+Predict the price of onion for the next few mont  hs for that state.
+Some of the cities don't have the state appended to it, it will be modified 
+while cleaning the data.
+
+# Acquire data
+
+The data was acquired from NHDRF site using the date wise arrival for the year 2017
+
+
+```{r AcquireData}
+library(rvest)
+dateWiseArrival = read_html("DateWiseMA2017_Onion.html")
+dateWiseTable = dateWiseArrival %>% 
+            html_node('#dnn_ctr966_DailyWiseMarketArrivals_GridView1') %>%
+            html_table()
+tempDateWiseTable = dateWiseTable
+str(dateWiseTable)
+```
+
+# Refine Data
+- adding state to cities which dont have the state .This is to get the accurate results  
+- Remove the last row
+- Rename the columns 
+- Change data types
+- Create a date column 
+- Clean up City Name
+-
+```{r Refine}
+
+
+library(tidyr)
+
+library(stringr)
+
+
+library(dplyr)
+colnames(dateWiseTable)= c("DOA","Market","Arrival","MinPrice","MaxPrice","Price")
+
+
+dateWiseTable = dateWiseTable %>% filter( Market != "Total")
+
+
+
+
+dateWiseTable$MinPrice=as.numeric(dateWiseTable$MinPrice)
+dateWiseTable$MaxPrice=as.numeric(dateWiseTable$MaxPrice)
+dateWiseTable$Price=as.numeric(dateWiseTable$Price)
+dateWiseTable$NewDOA=as.Date(dateWiseTable$DOA,"%d/%B/%Y")
+
+levels(dateWiseTable$Market)= NULL
+dateWiseTable$Market =dateWiseTable$Market %>% str_replace("\\(Podis","")
+
+dateWiseTable$Market =dateWiseTable$Market %>% str_replace("BANGALORE","BANGALORE(KNT)")
+dateWiseTable$Market =dateWiseTable$Market %>% str_replace("CHENNAI","CHENNAI(TN)")
+dateWiseTable$Market =dateWiseTable$Market %>% str_replace("DELHI","DELHI(DEL)")
+dateWiseTable$Market =dateWiseTable$Market %>% str_replace("MUMBAI","MUMBAI(MS)")
+dateWiseTable$Market =dateWiseTable$Market %>% str_replace("HYDERABAD","HYDERABAD(TELANGANA)")
+
+dateWiseTable$Market =dateWiseTable$Market %>% str_replace("GUWAHATI","GUWAHATI(AS)")
+
+dateWiseTable$Market =dateWiseTable$Market %>% str_replace("NAGPUR","NAGPUR(MS)")
+dateWiseTable$Market =dateWiseTable$Market %>% str_replace("BHOPAL","BHOPAL(MP)")
+dateWiseTable$Market =dateWiseTable$Market %>% str_replace("KOLKATA","KOLKATA(WB)")
+
+dateWiseTable$Market =dateWiseTable$Market %>% str_replace("PATNA","PATNA(BHR)")
+dateWiseTable$Market =dateWiseTable$Market %>% str_replace("SHIMLA","SHIMLA(HP)")
+dateWiseTable$Market =dateWiseTable$Market %>% str_replace("CHANDIGARH","CHANDIGARH(PB)")
+
+
+dateWiseTable$Market =dateWiseTable$Market %>% str_replace("JAIPUR","JAIPUR(RAJ)")
+
+dateWiseTable$Market =dateWiseTable$Market %>% str_replace("LUCKNOW","LUCKNOW(UP)")
+
+dateWiseTable =dateWiseTable %>% separate(Market,c('City','State1'),sep="\\(") %>% separate(State1,c('State'),sep="\\)")
+
+#tableData$State=as.factor(tableData$State)
+```
+# Transform Data
+Getting the top 10 for plotting
+
+```{r transform data}
+
+topStates=dateWiseTable %>% group_by(State) %>%
+              summarise(quantity_state=sum(Arrival)) %>%
+              arrange(desc(quantity_state))  %>% top_n(n=10)
+#%>%
+ #             filter(quantity_city > 2500000)
+          
+topStates          
+
+```
+
+# Explore Data
+```{r explore }
+library(ggplot2)
+topstateplot=ggplot(topStates) +
+    aes(reorder(State,quantity_state),weight=quantity_state)+
+    geom_bar()+
+      coord_flip()
+
+library(plotly)
+
+ggplotly(topstateplot)
+```
+
+```{r map plot}
+library(ggmap)
+topStates$State = topStates$State %>% str_replace("MS","Maharashtra")
+topStates$State = topStates$State %>% str_replace("GUJ","Gujurat")
+topStates$State = topStates$State %>% str_replace("KNT","karnataka")
+topStates$State = topStates$State %>% str_replace("MP","MadhyaPradesh")
+topStates$State = topStates$State %>% str_replace("RAJ","Rajasthan")
+topStates$State = topStates$State %>% str_replace("WB","WestBengal")
+topStates$State = topStates$State %>% str_replace("TN","TamilNadu")
+topStates$State = topStates$State %>% str_replace("UP","UttarPradesh")
+topStates$State = topStates$State %>% str_replace("TEL","Telangana")
+topStates$State = topStates$State %>% str_replace("DEL","Delhi")
+geo=geocode(topStates$State)
+topStatesGeo = bind_cols(topStates,geo)
+```
+```{r scatter plot}
+ggplot(topStatesGeo)+aes(lon,lat,size=quantity_state,color=State)+geom_point()
+
+map <- get_map("India", zoom=5, maptype="toner-lite")
+ggmap(map)+geom_point(data=topStatesGeo,aes(lon,lat,size=quantity_state,color=State))
+```
+```{r predicting price}
+MSDATA= dateWiseTable %>% filter(State=="MS")
+
+ggplot(MSDATA)+aes(NewDOA,MinPrice)+geom_line()
+ggplot(MSDATA)+aes(NewDOA)+geom_line(aes(y=MinPrice))+geom_line(aes(y=MaxPrice),col="red")+geom_line(aes(y=Price),col="green")
+
+
+MSDATAALL= MSDATA %>% gather("priceType","Price",5:7)
+
+ggplot(MSDATAALL)+aes(NewDOA,Price,color=priceType)+geom_line()
+
+
+```
+
+# Model
+
+```{r model}
+ts = MSDATA %>% dplyr::select(NewDOA,Price)
+colnames(ts)= c('ds','y')
+
+library(prophet)
+
+m= prophet(ts)
+
+future = make_future_dataframe(m,period=3)
+forecast=predict(m,future)
+plot(m,forecast)
+
+
+```
+
+# communicate
+
